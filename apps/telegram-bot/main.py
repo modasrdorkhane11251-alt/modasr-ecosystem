@@ -1,0 +1,144 @@
+"""
+حلقه‌ی اجرای واقعی: تلگرام (long polling) + Gemini + دیتابیس، از پشت PlatformAdapter.
+
+این فایل عمداً ساده و کوتاه است: فقط «سیم‌کشی» (wiring) هسته است، نه منطق کسب‌وکار.
+اجرا: از ریشه‌ی modasr-ecosystem،  `python apps/telegram-bot/main.py`
+نیاز به .env با BOT_TOKEN و GEMINI_API_KEY (نمونه در .env.example).
+
+⚠️ این فایل در محیط توسعه‌ی فعلی اجرا نشده (بدون اینترنت، بدون توکن واقعی).
+فقط با `python -c "import ast; ast.parse(open('main.py').read())"` و با import واقعی
+(بدون فراخوانی شبکه) بررسی شد که import و ساختار سالم است — جزئیات در docs/TEST_REPORT.md.
+"""
+from __future__ import annotations
+
+import logging
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+CORE = Path(__file__).resolve().parents[2] / "packages" / "core"
+sys.path.insert(0, str(CORE))
+sys.path.insert(0, str(CORE / "ai"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from config import AppConfig  # noqa: E402
+from database import Database  # noqa: E402
+from gemini import GeminiClient, GeminiConfig, GeminiError  # noqa: E402
+from adapter import TelegramAdapter  # noqa: E402
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("telegram-bot")
+
+SYSTEM_INSTRUCTION = "شما دستیار هوش مصنوعی MODASR هستید و به فارسی، مودبانه و مختصر پاسخ می‌دهید."
+
+
+def build_dependencies(cfg: AppConfig):
+    missing = cfg.problems(["telegram_bot_token", "gemini_api_key"])
+    if missing:
+        for m in missing:
+            log.error("پیکربندی ناقص: %s", m)
+        raise SystemExit(1)
+    db = Database(cfg.db_path)
+    gemini = GeminiClient(GeminiConfig(
+        api_key=cfg.gemini_api_key, model=cfg.gemini_model,
+        timeout_s=cfg.gemini_timeout_s, max_retries=cfg.gemini_max_retries,
+    ))
+    adapter = TelegramAdapter(cfg.telegram_bot_token)
+    return db, gemini, adapter
+
+
+def handle_message(db: Database, gemini: GeminiClient, adapter: TelegramAdapter, msg) -> None:
+    if not msg.text:
+        adapter.send_text(msg.chat_id, "فعلاً فقط پیام متنی پشتیبانی می‌شود (نسخه‌ی اولیه‌ی هسته).")
+        return
+    user = db.get_or_create_user(adapter.platform_name, msg.user_id, msg.user_display_name)
+    history = db.recent_messages(user.id, limit=16)
+    try:
+        reply = gemini.generate(history=history, prompt=msg.text, system_instruction=SYSTEM_INSTRUCTION)
+    except GeminiError as e:
+        log.warning("خطای Gemini برای کاربر %s: %s", user.id, e.technical_detail)
+        adapter.send_text(msg.chat_id, f"❌ {e.user_message}")
+        return
+    db.append_message(user.id, "user", msg.text)
+    db.append_message(user.id, "model", reply)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    db.increment_usage(user.id, "chat", today)
+    adapter.send_text(msg.chat_id, reply)
+
+
+def poll_once(db: Database, gemini: GeminiClient, adapter: TelegramAdapter, offset: int | None) -> int | None:
+    """یک دور getUpdates + پردازش. مقدار offset جدید را برمی‌گرداند (یا همان قبلی، اگر چیزی دریافت نشد).
+
+    جدا از run_polling تا بدون حلقه‌ی بی‌نهایت قابل تست باشد.
+    هیچ استثنایی را بیرون نمی‌دهد — هر خطا لاگ و offset بدون تغییر برمی‌گردد، تا حلقه‌ی اصلی هرگز crash نکند.
+    """
+    import requests
+    try:
+        params = {"timeout": 20}
+        if offset is not None:
+            params["offset"] = offset
+        r = requests.get(f"{adapter._base}/getUpdates", params=params, timeout=25)
+    except requests.RequestException as e:
+        log.warning("خطای شبکه در getUpdates: %s", e)
+        return offset
+
+    if r.status_code != 200:
+        log.warning("getUpdates وضعیت HTTP غیرمنتظره برگرداند: %s", r.status_code)
+        return offset
+
+    try:
+        data = r.json()
+    except ValueError:
+        log.warning("getUpdates پاسخ JSON نامعتبر برگرداند (بدنه: %s کاراکتر)", len(r.text or ""))
+        return offset
+
+    if not isinstance(data, dict) or not data.get("ok"):
+        log.warning("getUpdates پاسخ ok=false داد: %s", (data or {}).get("description", "بدون توضیح"))
+        return offset
+
+    results = data.get("result")
+    if not isinstance(results, list):
+        log.warning("getUpdates فیلد result نامعتبر/غایب برگرداند.")
+        return offset
+
+    for update in results:
+        update_id = update.get("update_id")
+        if update_id is None:
+            log.warning("آپدیت بدون update_id نادیده گرفته شد.")
+            continue
+        offset = update_id + 1
+        try:
+            msg = adapter.parse_update(update)
+        except Exception:  # noqa: BLE001
+            log.exception("خطا در پارس آپدیت؛ آپدیت رد شد.")
+            continue
+        if msg:
+            try:
+                handle_message(db, gemini, adapter, msg)
+            except Exception:  # noqa: BLE001
+                log.exception("خطای پیش‌بینی‌نشده در پردازش پیام")
+    return offset
+
+
+def run_polling(db: Database, gemini: GeminiClient, adapter: TelegramAdapter, poll_interval_s: float = 1.0) -> None:
+    offset = None
+    log.info("شروع polling...")
+    while True:
+        offset = poll_once(db, gemini, adapter, offset)
+        time.sleep(poll_interval_s)
+
+
+def main() -> None:
+    cfg = AppConfig.load()
+    db, gemini, adapter = build_dependencies(cfg)
+    health = adapter.health_check()
+    if not health.ok:
+        log.error("اتصال به تلگرام برقرار نشد: %s", health.detail)
+        raise SystemExit(1)
+    log.info("متصل به تلگرام: %s", health.detail)
+    run_polling(db, gemini, adapter)
+
+
+if __name__ == "__main__":
+    main()
