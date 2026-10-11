@@ -29,7 +29,17 @@ class AppConfig:
     # هسته
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "data/modasr.db"))
 
-    # Gemini
+    # OpenRouter — ارائه‌دهنده‌ی اصلی هوش مصنوعی پروژه (طبق تصمیم فعلی پروژه)
+    openrouter_api_key: str = field(default_factory=lambda: _env("OPENROUTER_API_KEY"))
+    openrouter_model: str = field(default_factory=lambda: _env("OPENROUTER_MODEL", "openai/gpt-4o-mini"))
+    openrouter_timeout_s: int = field(default_factory=lambda: _env_int("OPENROUTER_TIMEOUT_S", 30))
+    openrouter_max_retries: int = field(default_factory=lambda: _env_int("OPENROUTER_MAX_RETRIES", 2))
+    openrouter_history_turns: int = field(default_factory=lambda: _env_int("OPENROUTER_HISTORY_TURNS", 8))
+    openrouter_http_referer: str = field(default_factory=lambda: _env("OPENROUTER_HTTP_REFERER"))
+
+    # Gemini — نگه‌داشته‌شده به‌صورت اختیاری/غیرفعال برای آینده (طبق تصمیم پروژه، دیگر
+    # ارائه‌دهنده‌ی پیش‌فرض نیست و هیچ ربات فعلی آن را فرانمی‌خواند؛ رجوع کنید به
+    # docs/ARCHITECTURE.md بخش «ارائه‌دهنده‌ی هوش مصنوعی»)
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
     gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.5-flash"))
     gemini_timeout_s: int = field(default_factory=lambda: _env_int("GEMINI_TIMEOUT_S", 30))
