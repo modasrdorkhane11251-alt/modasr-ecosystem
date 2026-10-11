@@ -3,11 +3,11 @@
 چون هر دو پشت همان `PlatformAdapter` کار می‌کنند؛ تنها تفاوت، آداپتور و نام متغیر محیطی توکن است.
 
 اجرا: از ریشه‌ی modasr-ecosystem،  `python apps/bale-bot/main.py`
-نیاز به .env با BALE_BOT_TOKEN و GEMINI_API_KEY.
+نیاز به .env با BALE_BOT_TOKEN و OPENROUTER_API_KEY.
 
 ⚠️ این فایل در محیط توسعه فقط با Mock تست شده (بدون اینترنت). جزئیات در docs/TEST_REPORT.md.
 این حلقه کاملاً مستقل از تلگرام است: نه import می‌کند و نه state به اشتراک می‌گذارد؛
-فقط همان `Database` و `GeminiClient` مشترک هسته را دوباره می‌سازد (دو پردازه‌ی جدا).
+فقط همان `Database` و `OpenRouterClient` مشترک هسته را دوباره می‌سازد (دو پردازه‌ی جدا).
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import AppConfig  # noqa: E402
 from database import Database  # noqa: E402
-from gemini import GeminiClient, GeminiConfig, GeminiError  # noqa: E402
+from openrouter import OpenRouterClient, OpenRouterConfig, OpenRouterError  # noqa: E402
 from adapter import BaleAdapter  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -34,30 +34,31 @@ SYSTEM_INSTRUCTION = "شما دستیار هوش مصنوعی MODASR هستید 
 
 
 def build_dependencies(cfg: AppConfig):
-    missing = cfg.problems(["bale_bot_token", "gemini_api_key"])
+    missing = cfg.problems(["bale_bot_token", "openrouter_api_key"])
     if missing:
         for m in missing:
             log.error("پیکربندی ناقص: %s", m)
         raise SystemExit(1)
     db = Database(cfg.db_path)
-    gemini = GeminiClient(GeminiConfig(
-        api_key=cfg.gemini_api_key, model=cfg.gemini_model,
-        timeout_s=cfg.gemini_timeout_s, max_retries=cfg.gemini_max_retries,
+    ai_client = OpenRouterClient(OpenRouterConfig(
+        api_key=cfg.openrouter_api_key, model=cfg.openrouter_model,
+        timeout_s=cfg.openrouter_timeout_s, max_retries=cfg.openrouter_max_retries,
+        http_referer=cfg.openrouter_http_referer,
     ))
     adapter = BaleAdapter(cfg.bale_bot_token)
-    return db, gemini, adapter
+    return db, ai_client, adapter
 
 
-def handle_message(db: Database, gemini: GeminiClient, adapter: BaleAdapter, msg) -> None:
+def handle_message(db: Database, ai_client: OpenRouterClient, adapter: BaleAdapter, msg) -> None:
     if not msg.text:
         adapter.send_text(msg.chat_id, "فعلاً فقط پیام متنی پشتیبانی می‌شود (نسخه‌ی اولیه‌ی هسته).")
         return
     user = db.get_or_create_user(adapter.platform_name, msg.user_id, msg.user_display_name)
     history = db.recent_messages(user.id, limit=16)
     try:
-        reply = gemini.generate(history=history, prompt=msg.text, system_instruction=SYSTEM_INSTRUCTION)
-    except GeminiError as e:
-        log.warning("خطای Gemini برای کاربر %s: %s", user.id, e.technical_detail)
+        reply = ai_client.generate(history=history, prompt=msg.text, system_instruction=SYSTEM_INSTRUCTION)
+    except OpenRouterError as e:
+        log.warning("خطای OpenRouter برای کاربر %s: %s", user.id, e.technical_detail)
         adapter.send_text(msg.chat_id, f"❌ {e.user_message}")
         return
     db.append_message(user.id, "user", msg.text)
@@ -67,7 +68,7 @@ def handle_message(db: Database, gemini: GeminiClient, adapter: BaleAdapter, msg
     adapter.send_text(msg.chat_id, reply)
 
 
-def poll_once(db: Database, gemini: GeminiClient, adapter: BaleAdapter, offset: int | None) -> int | None:
+def poll_once(db: Database, ai_client: OpenRouterClient, adapter: BaleAdapter, offset: int | None) -> int | None:
     """یک دور getUpdates + پردازش روی بله. هرگز استثنا بیرون نمی‌دهد (مثل نسخه‌ی تلگرام).
 
     ⚠️ فرض بر این است که getUpdates بله دقیقاً همان شکل پاسخ تلگرام را دارد
@@ -116,29 +117,29 @@ def poll_once(db: Database, gemini: GeminiClient, adapter: BaleAdapter, offset: 
             continue
         if msg:
             try:
-                handle_message(db, gemini, adapter, msg)
+                handle_message(db, ai_client, adapter, msg)
             except Exception:  # noqa: BLE001
                 log.exception("خطای پیش‌بینی‌نشده در پردازش پیام بله")
     return offset
 
 
-def run_polling(db: Database, gemini: GeminiClient, adapter: BaleAdapter, poll_interval_s: float = 1.0) -> None:
+def run_polling(db: Database, ai_client: OpenRouterClient, adapter: BaleAdapter, poll_interval_s: float = 1.0) -> None:
     offset = None
     log.info("شروع polling بله...")
     while True:
-        offset = poll_once(db, gemini, adapter, offset)
+        offset = poll_once(db, ai_client, adapter, offset)
         time.sleep(poll_interval_s)
 
 
 def main() -> None:
     cfg = AppConfig.load()
-    db, gemini, adapter = build_dependencies(cfg)
+    db, ai_client, adapter = build_dependencies(cfg)
     health = adapter.health_check()
     if not health.ok:
         log.error("اتصال به بله برقرار نشد: %s", health.detail)
         raise SystemExit(1)
     log.info("متصل به بله: %s", health.detail)
-    run_polling(db, gemini, adapter)
+    run_polling(db, ai_client, adapter)
 
 
 if __name__ == "__main__":
