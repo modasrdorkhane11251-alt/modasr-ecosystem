@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages" / "core"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages" / "core" / "ai"))
 
 os.environ.setdefault("BOT_TOKEN", "123:fake")
-os.environ.setdefault("GEMINI_API_KEY", "fake-key")
+os.environ.setdefault("OPENROUTER_API_KEY", "fake-key")
 
 import importlib.util as _ilu
 _app_dir = Path(__file__).resolve().parents[1] / "apps" / "telegram-bot"
