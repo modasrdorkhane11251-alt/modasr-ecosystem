@@ -31,7 +31,7 @@ cd modasr-ecosystem
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-nano .env   # GEMINI_API_KEY, BOT_TOKEN, BALE_BOT_TOKEN را پر کنید
+nano .env   # OPENROUTER_API_KEY, BOT_TOKEN, BALE_BOT_TOKEN را پر کنید
 
 # ۲) تست‌های واحد (باید ۶۳/۶۳ PASS بدهد، دقیقاً مثل اینجا)
 python3 -m unittest discover -s tests -p "test_*.py" -v

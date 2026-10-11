@@ -1,4 +1,51 @@
-# گزارش تست (واقعی، اجراشده در همین محیط) — به‌روزشده بعد از دور اعتبارسنجی عملی
+# گزارش تست (واقعی، اجراشده در همین محیط)
+
+## 🔄 مهاجرت به OpenRouter (آخرین به‌روزرسانی)
+
+**نتیجه‌ی اولیه، قبل از هر تغییری:** `Ran 63 tests ... OK`
+
+**تغییرات انجام‌شده:**
+1. `packages/core/ai/openrouter.py` — کلاینت مستقل تازه، با همان الگوی `GeminiClient`
+   (امضای `generate(history, prompt, system_instruction)`، همان شکل خطا)، اما payload و
+   پارس پاسخ مطابق فرمت OpenAI/OpenRouter (`messages[]`, `choices[0].message.content`)،
+   چون این فرمت کاملاً با Gemini (`contents[]`, `parts[]`) فرق دارد و تبدیل مستقیم ممکن نبود.
+2. `packages/core/config.py` — فیلدهای `openrouter_*` اضافه شد (`OPENROUTER_API_KEY`,
+   `OPENROUTER_MODEL`, `OPENROUTER_TIMEOUT_S`, `OPENROUTER_MAX_RETRIES`,
+   `OPENROUTER_HISTORY_TURNS`, و `OPENROUTER_HTTP_REFERER` اختیاری). فیلدهای `gemini_*`
+   **حذف نشدند**، فقط دیگر به‌صورت پیش‌فرض استفاده نمی‌شوند.
+3. `apps/telegram-bot/main.py`, `apps/bale-bot/main.py` — import و ساخت کلاینت از
+   `GeminiClient` به `OpenRouterClient` عوض شد؛ متغیر محلی `gemini` به `ai_client` تغییر
+   نام یافت (چون دیگر Gemini نیست)؛ بقیه‌ی منطق (`handle_message`, `poll_once`,
+   `run_polling`) دست‌نخورده ماند — دقیقاً طبق خواسته‌ی «تغییرات حداقلی».
+4. `.env.example` — بخش OpenRouter اضافه شد، بخش Gemini با برچسب «اختیاری/غیرفعال» نگه داشته شد.
+5. `scripts/test_openrouter_live.py` — نسخه‌ی OpenRouter اسکریپت تست زنده (آینه‌ی
+   `test_gemini_live.py` که دست‌نخورده ماند).
+6. `tests/test_openrouter.py` — ۱۷ تست تازه (موفق، فرمت پیام‌ها، header اختیاری، تمام
+   کدهای خطا، retry، timeout، پاسخ خالی/نامعتبر). `tests/test_gemini.py` حذف نشد.
+
+**تصمیم درباره‌ی Gemini (طبق بند ۱۰ خواسته‌ی شما):** بررسی شد و هیچ وابستگی تولیدی
+(production) باقی نمانده — فقط `tests/test_gemini.py` و `scripts/test_gemini_live.py`
+به آن اشاره دارند که خودشان تست/ابزار جانبی‌اند، نه کد مصرف‌کننده. پس **حذف نشد**، به‌عنوان
+ارائه‌دهنده‌ی دوم/آینده نگه داشته شد (طبق بند ۹ درخواست شما).
+
+**نتیجه‌ی نهایی بعد از تغییر:**
+```
+Ran 80 tests in 0.05s
+OK
+```
+(۶۳ تست قبلی + ۱۷ تست تازه‌ی OpenRouter = ۸۰؛ هیچ تست قبلی حذف یا خراب نشد.)
+
+**تست زنده‌ی OpenRouter:** تلاش شد (`scripts/test_openrouter_live.py` با کلید جعلی).
+چون این سندباکس اینترنت ندارد، با خطای شبکه‌ی ایمن متوقف شد (کد خروج ۲، بدون چاپ کلید):
+```
+❌ ناموفق: اتصال به سرویس هوش مصنوعی برقرار نشد.
+   (جزئیات فنی: network: ...NameResolutionError: openrouter.ai...)
+```
+**تست زنده‌ی واقعی (با کلید معتبر OpenRouter) انجام نشده — نیاز به شما روی سروری با اینترنت.**
+
+---
+
+# گزارش قبلی (پیش از مهاجرت OpenRouter) — همچنان معتبر برای بخش‌های غیر-AI
 
 ## محدودیت محیط
 این سندباکس **اینترنت ندارد**؛ pytest/httpx قابل نصب نبودند. از `unittest` استاندارد و
