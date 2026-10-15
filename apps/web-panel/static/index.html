@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>پنل مدیریت MODASR</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- صفحه‌ی ورود -->
+<div id="login-screen" class="screen">
+  <form id="login-form" class="login-box">
+    <h1>MODASR</h1>
+    <p class="muted">ورود مدیر</p>
+    <input type="password" id="login-password" placeholder="رمز عبور" autocomplete="current-password" required>
+    <button type="submit">ورود</button>
+    <p id="login-error" class="error-text" hidden></p>
+  </form>
+</div>
+
+<!-- پنل اصلی -->
+<div id="app-screen" class="screen" hidden>
+  <nav id="sidebar">
+    <div class="brand">MODASR</div>
+    <button class="nav-btn active" data-page="dashboard">📊 داشبورد</button>
+    <button class="nav-btn" data-page="chat">💬 چت هوش مصنوعی</button>
+    <button class="nav-btn" data-page="users">👥 کاربران</button>
+    <button class="nav-btn" data-page="settings">⚙️ تنظیمات و وضعیت</button>
+    <button id="logout-btn" class="nav-btn logout">⏻ خروج</button>
+  </nav>
+
+  <button id="menu-toggle" aria-label="منو">☰</button>
+
+  <main id="content">
+    <!-- داشبورد -->
+    <section id="page-dashboard" class="page active">
+      <h2>داشبورد</h2>
+      <div id="dash-stats" class="cards"></div>
+      <h3>مصرف امروز</h3>
+      <table id="usage-table" class="data-table">
+        <thead><tr><th>قابلیت</th><th>کاربران</th><th>تعداد کل</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- چت -->
+    <section id="page-chat" class="page">
+      <h2>چت هوش مصنوعی</h2>
+      <div class="chat-toolbar">
+        <label for="chat-model">مدل:</label>
+        <input type="text" id="chat-model" placeholder="پیش‌فرض تنظیمات (مثلاً openai/gpt-4o-mini)">
+        <button id="chat-clear">پاک کردن گفتگو</button>
+      </div>
+      <div id="chat-log"></div>
+      <form id="chat-form" class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="پیام خود را بنویسید..." autocomplete="off" required>
+        <button type="submit">ارسال</button>
+      </form>
+    </section>
+
+    <!-- کاربران -->
+    <section id="page-users" class="page">
+      <h2>کاربران</h2>
+      <div class="toolbar">
+        <select id="users-platform-filter">
+          <option value="">همه‌ی پلتفرم‌ها</option>
+          <option value="telegram">تلگرام</option>
+          <option value="bale">بله</option>
+          <option value="rubika">روبیکا</option>
+        </select>
+        <button id="users-refresh">تازه‌سازی</button>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>پلتفرم</th><th>نام</th><th>شناسه</th><th>پیام امروز</th><th>عضویت</th><th>اشتراک</th><th></th></tr></thead>
+        <tbody id="users-table-body"></tbody>
+      </table>
+    </section>
+
+    <!-- تنظیمات -->
+    <section id="page-settings" class="page">
+      <h2>تنظیمات و وضعیت اتصال</h2>
+      <div id="settings-cards" class="cards"></div>
+      <p class="muted small">مقادیر کامل کلید/توکن هیچ‌وقت در پنل نمایش داده نمی‌شود.</p>
+    </section>
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
