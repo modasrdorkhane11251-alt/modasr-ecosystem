@@ -88,6 +88,39 @@ class TelegramAdapter(PlatformAdapter):
             return SendResult(ok=False, error=data.get("description", f"HTTP {r.status_code}"))
         return SendResult(ok=True, message_id=str(data["result"]["message_id"]))
 
+    TELEGRAM_SEND_METHOD = {
+        MediaKind.PHOTO: ("sendPhoto", "photo"),
+        MediaKind.VOICE: ("sendVoice", "voice"),
+        MediaKind.AUDIO: ("sendAudio", "audio"),
+        MediaKind.VIDEO: ("sendVideo", "video"),
+        MediaKind.DOCUMENT: ("sendDocument", "document"),
+    }
+
+    def send_media(self, chat_id: str, kind: MediaKind, file_path: str, caption: str = "") -> SendResult:
+        method, field = self.TELEGRAM_SEND_METHOD.get(kind, (None, None))
+        if not method:
+            return SendResult(ok=False, error=f"نوع رسانه‌ی پشتیبانی‌نشده: {kind}")
+        try:
+            f = open(file_path, "rb")
+        except OSError as e:
+            return SendResult(ok=False, error=f"فایل قابل خواندن نبود: {e}")
+        # requests.exceptions.ConnectionError از OSError هم ارث می‌برد؛ به همین خاطر خطای
+        # شبکه باید جدا از خطای باز کردن فایل گرفته شود، وگرنه به‌اشتباه "فایل خوانده
+        # نشد" گزارش می‌شود در حالی که فایل باز شده و مشکل واقعاً در اتصال شبکه است.
+        try:
+            with f:
+                data = {"chat_id": chat_id}
+                if caption:
+                    data["caption"] = caption[:1024]
+                r = self._session.post(f"{self._base}/{method}", data=data,
+                                       files={field: f}, timeout=max(self._timeout, 60))
+        except requests.RequestException as e:
+            return SendResult(ok=False, error=f"network: {e}")
+        result = r.json()
+        if not result.get("ok"):
+            return SendResult(ok=False, error=result.get("description", f"HTTP {r.status_code}"))
+        return SendResult(ok=True, message_id=str(result["result"]["message_id"]))
+
     def health_check(self) -> HealthStatus:
         try:
             r = self._session.get(f"{self._base}/getMe", timeout=self._timeout)
