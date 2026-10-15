@@ -3,3 +3,12 @@ data/
 __pycache__/
 *.pyc
 *.db
+
+# Local Python environment and backups
+venv/
+*.bak
+.env.*
+!.env.example
+backups/
+.pytest_cache/
+*.egg-info/
