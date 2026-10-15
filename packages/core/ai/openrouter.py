@@ -1,36 +1,11 @@
-"""
-کلاینت OpenRouter — ارائه‌دهنده‌ی اصلی هوش مصنوعی پروژه.
-
-عمداً از همان الگوی `gemini.py` پیروی می‌کند (همان نام متد `generate(history, prompt,
-system_instruction)`، همان شکل خطا) تا تغییرات لازم در `apps/telegram-bot/main.py` و
-`apps/bale-bot/main.py` حداقلی باشد: فقط import و ساخت کلاینت عوض می‌شود، نه منطق پیام‌رسان.
-
-چرا requests و نه httpx: مثل gemini.py، چون در محیط توسعه‌ی فعلی نصب پکیج جدید با
-اینترنت ممکن نیست؛ requests از قبل نصب بود.
-
-API رسمی OpenRouter: POST https://openrouter.ai/api/v1/chat/completions
-فرمت درخواست/پاسخ سازگار با OpenAI Chat Completions است (model, messages[], ...).
-مستندسازی خطا بر اساس همان کدهای HTTP استاندارد (docs: openrouter.ai/docs) — در این
-محیط بدون اینترنت امکان چک لحظه‌ای مستندات نبود؛ قبل از اتکای جدی، با یک تست زنده
-(`scripts/test_openrouter_live.py`) تایید کنید.
-"""
+"""OpenRouter chat-completions client."""
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 import requests
-
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
-NON_RETRYABLE_STATUS = {400, 401, 403, 404}
-
-
-class OpenRouterError(Exception):
-    def __init__(self, user_message: str, technical_detail: str = "", status_code: int | None = None):
-        super().__init__(user_message)
-        self.user_message = user_message
-        self.technical_detail = technical_detail
-        self.status_code = status_code
 
 
 @dataclass
@@ -38,104 +13,134 @@ class OpenRouterConfig:
     api_key: str
     model: str = "openai/gpt-4o-mini"
     base_url: str = "https://openrouter.ai/api/v1/chat/completions"
-    timeout_s: int = 30
+    timeout_s: int = 60
     max_retries: int = 2
     retry_base_delay_s: float = 0.5
-    # این دو هدر اختیاری‌اند طبق مستندات OpenRouter (برای نمایش پروژه در رتبه‌بندی‌شان)؛
-    # نبودشان خطا ایجاد نمی‌کند، فقط برای شناسایی پروژه مفیدند.
-    http_referer: str = ""
-    app_title: str = "MODASR ECOSYSTEM"
 
 
-def _status_to_user_message(status: int) -> str:
-    return {
-        400: "درخواست نامعتبر بود. لطفاً پیام را بازنویسی کنید.",
-        401: "کلید API معتبر نیست. (ادمین باید OPENROUTER_API_KEY را بررسی کند)",
-        403: "دسترسی به این مدل مجاز نیست. (ادمین باید دسترسی کلید API یا اعتبار حساب را بررسی کند)",
-        404: "مدل هوش مصنوعی یافت نشد. (ادمین باید نام مدل OPENROUTER_MODEL را بررسی کند)",
-        429: "سرویس هوش مصنوعی شلوغ است یا سقف مصرف پر شده. چند لحظه دیگر دوباره امتحان کنید.",
-        500: "خطای موقت سرویس هوش مصنوعی. دوباره امتحان کنید.",
-        502: "خطای موقت سرویس هوش مصنوعی. دوباره امتحان کنید.",
-        503: "سرویس هوش مصنوعی موقتاً در دسترس نیست. دوباره امتحان کنید.",
-        504: "پاسخ سرویس هوش مصنوعی طول کشید. دوباره امتحان کنید.",
-    }.get(status, f"خطای سرویس هوش مصنوعی (کد {status}).")
+class OpenRouterError(Exception):
+    def __init__(
+        self,
+        user_message: str,
+        technical_detail: str = "",
+        status_code: int | None = None,
+    ):
+        super().__init__(technical_detail or user_message)
+        self.user_message = user_message
+        self.technical_detail = technical_detail
+        self.status_code = status_code
 
 
 class OpenRouterClient:
-    """اینترفیس عمومی عمداً با GeminiClient یکسان است: generate(history, prompt, system_instruction)."""
+    RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
-    def __init__(self, config: OpenRouterConfig, session: requests.Session | None = None,
-                 sleep_fn=time.sleep):
+    def __init__(
+        self,
+        config: OpenRouterConfig,
+        session: requests.Session | None = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ):
         if not config.api_key:
-            raise ValueError("OpenRouterConfig.api_key خالی است؛ OpenRouterClient نباید بدون کلید ساخته شود.")
+            raise ValueError("کلید OpenRouter تنظیم نشده است.")
+        if not config.model:
+            raise ValueError("مدل OpenRouter تنظیم نشده است.")
         self.config = config
         self.session = session or requests.Session()
-        self._sleep = sleep_fn
+        self.sleep_fn = sleep_fn
 
-    def generate(self, history: list[tuple[str, str]], prompt: str,
-                 system_instruction: str = "") -> str:
-        """history: لیست (role, text) با role در {'user','model'}؛ 'model' به 'assistant' تبدیل می‌شود
-        چون فرمت OpenAI/OpenRouter از 'assistant' استفاده می‌کند، نه 'model' (تفاوت با Gemini)."""
+    def generate(
+        self,
+        history: list[tuple[str, str]],
+        prompt: str,
+        system_instruction: str = "",
+    ) -> str:
         messages = []
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
-        for role, text in history:
-            messages.append({"role": "assistant" if role == "model" else "user", "content": text})
+
+        for role, content in history:
+            if role == "model":
+                role = "assistant"
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+
         messages.append({"role": "user", "content": prompt})
 
-        payload = {"model": self.config.model, "messages": messages, "temperature": 0.7}
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.config.api_key}"}
-        if self.config.http_referer:
-            headers["HTTP-Referer"] = self.config.http_referer
-        if self.config.app_title:
-            headers["X-Title"] = self.config.app_title
+        payload = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 1000,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json",
+            "X-Title": "MODASR ECOSYSTEM",
+        }
 
-        last_error: OpenRouterError | None = None
-        attempts = self.config.max_retries + 1
-        for attempt in range(1, attempts + 1):
+        for attempt in range(self.config.max_retries + 1):
             try:
-                resp = self.session.post(self.config.base_url, json=payload, headers=headers,
-                                         timeout=self.config.timeout_s)
-            except requests.Timeout:
-                last_error = OpenRouterError("سرویس هوش مصنوعی پاسخ نداد (timeout).", "timeout")
-                self._maybe_wait(attempt, attempts)
-                continue
-            except requests.RequestException as e:
-                last_error = OpenRouterError("اتصال به سرویس هوش مصنوعی برقرار نشد.", f"network: {e}")
-                self._maybe_wait(attempt, attempts)
-                continue
+                response = self.session.post(
+                    self.config.base_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.config.timeout_s,
+                )
+            except requests.RequestException as exc:
+                if attempt < self.config.max_retries:
+                    self.sleep_fn(self.config.retry_base_delay_s * (2 ** attempt))
+                    continue
+                raise OpenRouterError(
+                    "ارتباط با سرویس هوش مصنوعی برقرار نشد. کمی بعد دوباره تلاش کن.",
+                    f"Network error: {type(exc).__name__}",
+                ) from exc
 
-            if resp.status_code == 200:
-                return self._extract_text(resp)
+            if response.status_code in self.RETRYABLE_STATUS:
+                if attempt < self.config.max_retries:
+                    self.sleep_fn(self.config.retry_base_delay_s * (2 ** attempt))
+                    continue
 
-            detail = resp.text[:500]
-            status = resp.status_code
-            last_error = OpenRouterError(_status_to_user_message(status), detail, status)
-            if status in NON_RETRYABLE_STATUS:
-                raise last_error
-            if status in RETRYABLE_STATUS:
-                self._maybe_wait(attempt, attempts)
-                continue
-            raise last_error  # کد ناشناخته: محتاطانه retry نمی‌کنیم
+            if response.status_code != 200:
+                status = response.status_code
+                try:
+                    data = response.json()
+                    detail = str(data.get("error", data))[:500]
+                except (ValueError, AttributeError):
+                    detail = "پاسخ خطای غیر JSON"
+                if status in (401, 403):
+                    message = "کلید OpenRouter معتبر نیست یا اجازه دسترسی ندارد."
+                elif status == 402:
+                    message = "اعتبار یا موجودی حساب OpenRouter کافی نیست."
+                elif status == 429:
+                    message = "درخواست‌ها به محدودیت سرویس رسیده‌اند؛ کمی بعد دوباره تلاش کن."
+                elif status == 404:
+                    message = "مدل انتخاب‌شده در OpenRouter پیدا نشد یا در دسترس نیست."
+                else:
+                    message = "سرویس هوش مصنوعی موقتاً خطا داد؛ بعداً دوباره تلاش کن."
+                raise OpenRouterError(message, f"HTTP {status}: {detail}", status)
 
-        raise last_error
+            try:
+                data = response.json()
+                choices = data.get("choices", [])
+                content = choices[0]["message"]["content"]
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+                if isinstance(content, list):
+                    parts = [
+                        item.get("text", "")
+                        for item in content
+                        if isinstance(item, dict) and item.get("type") == "text"
+                    ]
+                    result = "".join(parts).strip()
+                    if result:
+                        return result
+            except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+                pass
 
-    def _maybe_wait(self, attempt: int, attempts: int) -> None:
-        if attempt < attempts:
-            self._sleep(self.config.retry_base_delay_s * (2 ** (attempt - 1)))
+            raise OpenRouterError(
+                "پاسخ معتبر از هوش مصنوعی دریافت نشد.",
+                "Missing or invalid choices[0].message.content",
+            )
 
-    @staticmethod
-    def _extract_text(resp: requests.Response) -> str:
-        try:
-            data = resp.json()
-        except ValueError:
-            raise OpenRouterError("پاسخ سرویس هوش مصنوعی قابل‌خواندن نبود.", resp.text[:500])
-        choices = data.get("choices") or []
-        if not choices:
-            err = (data.get("error") or {}).get("message", "پاسخ خالی")
-            raise OpenRouterError(f"مدل پاسخی برنگرداند ({err}).", str(data)[:500])
-        message = choices[0].get("message") or {}
-        text = message.get("content")
-        if not text:
-            raise OpenRouterError("مدل پاسخ متنی برنگرداند.", str(data)[:500])
-        return text
+        raise OpenRouterError("درخواست ناموفق بود؛ بعداً دوباره تلاش کن.")
+
