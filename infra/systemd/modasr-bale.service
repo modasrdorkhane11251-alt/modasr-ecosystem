@@ -1,0 +1,28 @@
+[Unit]
+Description=MODASR Bale Bot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=modasr
+Group=modasr
+WorkingDirectory=/opt/modasr-ecosystem
+EnvironmentFile=/opt/modasr-ecosystem/.env
+ExecStart=/opt/modasr-ecosystem/venv/bin/python3 /opt/modasr-ecosystem/apps/bale-bot/main.py
+Restart=on-failure
+RestartSec=5
+
+# سخت‌سازی (در صورت مشکل روی توزیع/کرنل خاص، می‌توانید هرکدام را کامنت کنید)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/modasr-ecosystem/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
