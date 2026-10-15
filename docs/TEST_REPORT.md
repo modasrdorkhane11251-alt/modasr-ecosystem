@@ -1,51 +1,4 @@
-# گزارش تست (واقعی، اجراشده در همین محیط)
-
-## 🔄 مهاجرت به OpenRouter (آخرین به‌روزرسانی)
-
-**نتیجه‌ی اولیه، قبل از هر تغییری:** `Ran 63 tests ... OK`
-
-**تغییرات انجام‌شده:**
-1. `packages/core/ai/openrouter.py` — کلاینت مستقل تازه، با همان الگوی `GeminiClient`
-   (امضای `generate(history, prompt, system_instruction)`، همان شکل خطا)، اما payload و
-   پارس پاسخ مطابق فرمت OpenAI/OpenRouter (`messages[]`, `choices[0].message.content`)،
-   چون این فرمت کاملاً با Gemini (`contents[]`, `parts[]`) فرق دارد و تبدیل مستقیم ممکن نبود.
-2. `packages/core/config.py` — فیلدهای `openrouter_*` اضافه شد (`OPENROUTER_API_KEY`,
-   `OPENROUTER_MODEL`, `OPENROUTER_TIMEOUT_S`, `OPENROUTER_MAX_RETRIES`,
-   `OPENROUTER_HISTORY_TURNS`, و `OPENROUTER_HTTP_REFERER` اختیاری). فیلدهای `gemini_*`
-   **حذف نشدند**، فقط دیگر به‌صورت پیش‌فرض استفاده نمی‌شوند.
-3. `apps/telegram-bot/main.py`, `apps/bale-bot/main.py` — import و ساخت کلاینت از
-   `GeminiClient` به `OpenRouterClient` عوض شد؛ متغیر محلی `gemini` به `ai_client` تغییر
-   نام یافت (چون دیگر Gemini نیست)؛ بقیه‌ی منطق (`handle_message`, `poll_once`,
-   `run_polling`) دست‌نخورده ماند — دقیقاً طبق خواسته‌ی «تغییرات حداقلی».
-4. `.env.example` — بخش OpenRouter اضافه شد، بخش Gemini با برچسب «اختیاری/غیرفعال» نگه داشته شد.
-5. `scripts/test_openrouter_live.py` — نسخه‌ی OpenRouter اسکریپت تست زنده (آینه‌ی
-   `test_gemini_live.py` که دست‌نخورده ماند).
-6. `tests/test_openrouter.py` — ۱۷ تست تازه (موفق، فرمت پیام‌ها، header اختیاری، تمام
-   کدهای خطا، retry، timeout، پاسخ خالی/نامعتبر). `tests/test_gemini.py` حذف نشد.
-
-**تصمیم درباره‌ی Gemini (طبق بند ۱۰ خواسته‌ی شما):** بررسی شد و هیچ وابستگی تولیدی
-(production) باقی نمانده — فقط `tests/test_gemini.py` و `scripts/test_gemini_live.py`
-به آن اشاره دارند که خودشان تست/ابزار جانبی‌اند، نه کد مصرف‌کننده. پس **حذف نشد**، به‌عنوان
-ارائه‌دهنده‌ی دوم/آینده نگه داشته شد (طبق بند ۹ درخواست شما).
-
-**نتیجه‌ی نهایی بعد از تغییر:**
-```
-Ran 80 tests in 0.05s
-OK
-```
-(۶۳ تست قبلی + ۱۷ تست تازه‌ی OpenRouter = ۸۰؛ هیچ تست قبلی حذف یا خراب نشد.)
-
-**تست زنده‌ی OpenRouter:** تلاش شد (`scripts/test_openrouter_live.py` با کلید جعلی).
-چون این سندباکس اینترنت ندارد، با خطای شبکه‌ی ایمن متوقف شد (کد خروج ۲، بدون چاپ کلید):
-```
-❌ ناموفق: اتصال به سرویس هوش مصنوعی برقرار نشد.
-   (جزئیات فنی: network: ...NameResolutionError: openrouter.ai...)
-```
-**تست زنده‌ی واقعی (با کلید معتبر OpenRouter) انجام نشده — نیاز به شما روی سروری با اینترنت.**
-
----
-
-# گزارش قبلی (پیش از مهاجرت OpenRouter) — همچنان معتبر برای بخش‌های غیر-AI
+# گزارش تست (واقعی، اجراشده در همین محیط) — به‌روزشده بعد از دور اعتبارسنجی عملی
 
 ## محدودیت محیط
 این سندباکس **اینترنت ندارد**؛ pytest/httpx قابل نصب نبودند. از `unittest` استاندارد و
@@ -123,3 +76,156 @@ $ python3 scripts/test_gemini_live.py
 | polling زنده‌ی بله روی چت واقعی | همان دلیل بالا |
 | هر چیز مربوط به روبیکا | طبق تصمیم قبلی، شروع نشد |
 | نصب از `requirements.txt` در محیط تازه | نیاز به اینترنت برای pip |
+
+---
+
+# 🔄 افزودن پنل وب، VPS، GitHub readiness (آخرین به‌روزرسانی)
+
+## نتیجه‌ی اولیه، قبل از هر تغییری در این دور
+این دور روی نسخه‌ای از مخزن کار شد که کاربر خودش روی سرور داشته (آپلودشده به‌صورت
+tar.gz)، نه نسخه‌ی قبلی این چت. اولین اجرا:
+```
+Ran 68 tests ... OK
+```
+همراه با دو یافته‌ی مهم قبل از شروع توسعه:
+1. **`tests/test_openrouter.py` اصلاً وجود نداشت** — یعنی کلاینت OpenRouن واقعی
+   (`packages/core/ai/openrouter.py`) هیچ تست واحد اختصاصی نداشت، با اینکه در ۳ ربات
+   استفاده می‌شد. این خلأ با ۱۸ تست تازه (منطبق بر پیاده‌سازی واقعیِ موجود، نه بازنویسی) پر شد.
+2. **`apps/rubika-bot/adapter.py` و `main.py` از قبل پیاده‌سازی شده بودند**، با
+   `botapi.rubika.ir/v3/<token>` (توکن‌محور، نه لاگین شماره‌تلفن/OTP شخصی) — جزئیات در
+   `docs/ARCHITECTURE.md` و `docs/NEXT_STEPS.md`.
+
+## تغییرات این دور
+- `tests/test_openrouter.py` — ۱۸ تست تازه (موفق، فرمت پیام، کدهای خطای ۴۰۱/۴۰۲/۴۰۴/۴۲۹/۵۰۳،
+  retry، timeout، network error، پاسخ خالی/نامعتبر/غیر-JSON، فرمت content به‌صورت لیست بلوک).
+- `apps/web-panel/` — سرور کامل (`server.py`, `auth.py`) + فرانت‌اند استاتیک RTL فارسی.
+- `tests/test_web_panel.py` — ۱۵ تست **end-to-end واقعی** (سرور HTTP واقعی روی یک پورت
+  محلی، درخواست HTTP واقعی با `urllib`، دیتابیس SQLite موقت واقعی — نه Mock).
+- `infra/install.sh` + ۴ واحد systemd + `scripts/modasrctl.sh`, `backup.sh`, `restore.sh`.
+- `scripts/check_secrets.py` + مرحله‌ی متناظر در `.github/workflows/tests.yml`.
+- `README.md` (بازنویسی کامل، قبلی خیلی قدیمی و نادرست بود: «۴۷ تست»، «Gemini»، «روبیکا پیاده نشده»)
+  + `README.en.md` تازه + `docs/DEPLOYMENT.md` تازه + `docs/ARCHITECTURE.md` بازنویسی شد.
+- `.env.example` با متغیرهای پنل (`ADMIN_PASSWORD_HASH`, `PANEL_HOST`, `PANEL_PORT`) تکمیل شد.
+- `requirements.txt` اصلاح شد: `python-dotenv` حذف شد چون هیچ‌جای کد import نمی‌شود
+  (خود `config.py` بارگذاری `.env` را مستقیم انجام می‌دهد)؛ تنها وابستگی واقعی `requests` است.
+
+## نتیجه‌ی نهایی این دور
+```
+Ran 101 tests in ~4.5s
+OK
+```
+تفکیک: config(6) + database(8) + gemini(10، اختیاری/غیرفعال) + openrouter(18) +
+telegram_adapter(11) + telegram_polling(8) + bale_adapter(11) + bale_polling(8) +
+rubika_adapter(6) + web_panel(15) = ۱۰۱.
+
+## چه چیزی واقعاً زنده تست شد، چه چیزی نه
+| آیتم | نوع تست | نتیجه |
+|---|---|---|
+| منطق پنل (auth, dashboard, users, settings, chat-routing) | **زنده، سرور واقعی HTTP** | ✅ PASS |
+| پشتیبان‌گیری/بازیابی (`backup.sh`/`restore.sh`) | **زنده، فایل واقعی** | ✅ round-trip درست |
+| نحو واحدهای systemd | `systemd-analyze verify` (بدون bus واقعی) | ✅ بدون خطا (یک باگ واقعی پیدا و رفع شد: `StartLimitIntervalSec` در بخش اشتباه بود) |
+| نحو اسکریپت‌های bash | `bash -n` | ✅ |
+| اسکنر امنیتی قبل از انتشار | واقعی، با تزریق توکن جعلی برای اطمینان از تشخیص | ✅ هم مثبت کاذب نمی‌دهد (مخزن فعلی تمیز) هم توکن واقعی‌نما را می‌گیرد |
+| چت زنده‌ی OpenRouter از طریق پنل | ❌ تست نشده | نیاز به کلید واقعی |
+| نصب کامل `infra/install.sh` روی VPS واقعی | ❌ تست نشده | نیاز به سرور Ubuntu واقعی با root |
+| اتصال زنده‌ی بله (فرمت واقعی `getUpdates`/`sendMessage`) | ❌ هنوز تست نشده | طبق خواسته‌ی صریح کاربر، جداگانه ثبت شده، نه مانعی برای ادامه |
+
+## 🔒 یافته‌ی امنیتی این دور (نه مربوط به کد، مربوط به فایل آپلودشده)
+فایل tar.gz که برای ادامه‌ی کار آپلود شد، حاوی `.env` و `.env.bak` **با مقادیر واقعی و غیرخالی**
+برای `OPENROUTER_API_KEY`, `BOT_TOKEN`, `BALE_BOT_TOKEN`, `RUBIKA_BOT_TOKEN` بود. این مقادیر:
+- در هیچ خروجی، لاگ، یا فایل تولیدشده توسط این دور تکرار/چاپ نشدند.
+- بررسی شد که در گیت **track نشده‌اند** و در کل تاریخچه‌ی کامیت‌ها هم نبوده‌اند
+  (`git log --all --full-history -- .env .env.bak` خالی بود) — یعنی به GitHub درز نکرده‌اند.
+- با این حال، چون از طریق آپلود چت منتقل شدند، rotate کردن‌شان به‌عنوان احتیاط توصیه می‌شود.
+جزئیات در `docs/SECURITY_AUDIT.md`.
+
+---
+
+# 🔄 افزودن send_media (آخرین به‌روزرسانی)
+
+نتیجه‌ی اولیه قبل از تغییر: `Ran 101 tests ... OK`
+
+`send_media` برای `TelegramAdapter` و `BaleAdapter` پیاده شد (عکس/ویس/صدا/ویدیو/سند،
+با multipart upload واقعی فایل محلی، نه فقط file_id). ۱۰ تست تازه (۵ تا هرکدام) اضافه شد.
+
+**🐞 باگ واقعی پیدا و رفع شد:** در پیاده‌سازی اول، خطای شبکه‌ی `requests.ConnectionError`
+به‌اشتباه به‌عنوان «فایل خوانده نشد» گزارش می‌شد، چون `ConnectionError` در کتابخانه‌ی
+requests هم از `RequestException` ارث می‌برد هم از `OSError`، و ترتیب `except` اول
+`OSError` را می‌گرفت. رفع شد با جدا کردن مرحله‌ی «باز کردن فایل» از مرحله‌ی «ارسال شبکه»
+در دو بلوک `try` مجزا. تست `test_send_media_network_error_returns_error_not_crash` این
+باگ را گرفت و بعد از رفع، پاس شد.
+
+نتیجه‌ی نهایی:
+```
+Ran 111 tests in ~4.3s
+OK
+```
+(۱۰۱ قبلی + ۵ تست send_media تلگرام + ۵ تست send_media بله)
+
+⚠️ مثل بقیه‌ی قابلیت‌های شبکه‌ای پروژه، این فقط با Mock تست شده؛ آپلود واقعی فایل به
+تلگرام/بله هنوز زنده تست نشده.
+
+---
+
+# 🔄 افزودن اشتراک/لایسنس (manual entitlement) — آخرین به‌روزرسانی
+
+نتیجه‌ی اولیه قبل از تغییر: `Ran 111 tests ... OK`
+
+**چی اضافه شد:**
+- مهاجرت نسخه‌ی ۲ دیتابیس (`subscriptions`, `subscription_audit_log`) — بدون تغییر
+  مخرب شِمای قبلی؛ تست `test_migration_is_idempotent_on_reopen` قبلی هنوز پاس می‌شود.
+- `SUBSCRIPTION_PLANS` در `database.py` (۶ پلن: رایگان تا دائمی)، فقط نام/مدت، بدون قیمت.
+- متدهای `grant_subscription`, `revoke_subscription`, `get_subscription`,
+  `is_subscription_active`, `subscription_audit_log`, `list_subscriptions`.
+- ۴ endpoint تازه در پنل وب (جدول بالا در `docs/ARCHITECTURE.md`).
+- رابط کاربری صفحه‌ی کاربران: نمایش وضعیت اشتراک + دکمه‌ی صدور/تمدید/لغو.
+
+**🐞 یک مشکل (در تست، نه در کد تولیدی) پیدا و رفع شد:** اولین نسخه‌ی
+`WebPanelSubscriptionTests` یک کاربر مشترک بین همه‌ی تست‌های کلاس می‌ساخت؛ چون
+`unittest` تست‌ها را الفبایی اجرا می‌کند، `test_grant_subscription_then_reflected...`
+قبل از `test_user_has_no_subscription_initially` اجرا می‌شد و state آن را آلوده می‌کرد
+(فیل می‌شد). رفع شد: هر تست حالا کاربر مستقل خودش را می‌سازد (`setUp` با
+`platform_user_id` یکتا بر اساس نام تست). بعد از رفع، دو بار پشت‌سرهم اجرا شد تا از
+پایداری (نه شانسی‌بودن) نتیجه مطمئن شوم.
+
+نتیجه‌ی نهایی:
+```
+Ran 130 tests in ~7.2s
+OK
+```
+(۱۱۱ قبلی + ۱۱ تست دیتابیس اشتراک + ۸ تست end-to-end API اشتراک + یک‌سری همپوشانی رفع‌شده)
+
+⚠️ منطق محدودکردن مصرف بر اساس اشتراک هنوز در خود ربات‌ها (تلگرام/بله) وصل نشده —
+فقط زیرساخت دیتابیس و API مدیریتش آماده و تست شده است. چت زنده از طریق پنل با یک کاربر
+دارای/بدون اشتراک فرقی نمی‌کند (قدم بعدی، نه این دور).
+
+---
+
+# 🔄 وصل‌کردن محدودیت اشتراک به ربات‌ها — آخرین به‌روزرسانی
+
+نتیجه‌ی اولیه قبل از تغییر: `Ran 130 tests ... OK`
+
+`check_quota()` به `apps/telegram-bot/main.py` و `apps/bale-bot/main.py` اضافه شد
+(کد مشابه در هر دو، عمداً کپی نه وابستگی مشترک بین دو پردازه‌ی مستقل). قبل از هر
+فراخوانی OpenRouter چک می‌شود: کاربر بدون اشتراک فعال → سقف پلن `free`؛ کاربر مشترک
+فعال → نامحدود؛ اشتراک لغوشده/منقضی/نامعتبر → محافظه‌کارانه به `free` برمی‌گردد یا رد
+می‌شود (never crash, never silently unlimited).
+
+**🐞 یک مشکل (در تست کپی‌شده، نه کد تولیدی) پیدا و رفع شد:** هنگام mirror کردن تست‌های
+تلگرام برای بله، یک `get_or_create_user("telegram", ...)` باقی مانده بود در حالی که
+`handle_message` بله کاربر را با `platform="bale"` می‌سازد — یعنی تست داشت به یک کاربر
+دیگر (با usage صفر) چک می‌کرد، نه همان کاربری که `handle_message` واقعاً می‌سازد.
+نتیجه: تست انتظار «رد شدن» داشت ولی چون کاربر اشتباه چک شده بود، پیام واقعاً به
+OpenRouter (Mock) می‌رفت و چون `return_value` تنظیم نشده بود، یک `MagicMock` خام به
+`db.append_message` می‌رسید و `sqlite3.ProgrammingError` می‌داد. رفع شد (`"telegram"` →
+`"bale"` در همان یک خط)؛ تست دوباره اجرا شد و پاس شد.
+
+نتیجه‌ی نهایی:
+```
+Ran 148 tests in ~7.4s
+OK
+```
+(۱۳۰ قبلی + ۹ تست `check_quota`/`handle_message` تلگرام + ۹ تست مشابه بله)
+
+⚠️ هنوز تست‌نشده: رفتار واقعی این محدودیت وقتی کاربر واقعی از طریق تلگرام/بله زنده
+پیام می‌فرستد (نیاز به اجرای واقعی `main.py` با توکن واقعی).
